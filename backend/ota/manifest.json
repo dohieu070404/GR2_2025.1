@@ -1,0 +1,30 @@
+{
+  "zigbee": {
+    "dimmer": {
+      "version": "3.1.0",
+      "path": "/ota/zigbee/zigbee_enddevice_light.bin",
+      "sha256": "",
+      "notes": "Zigbee dimmable light end device (OnOff + Level)"
+    },
+    "rgb": {
+      "version": "3.1.0",
+      "path": "/ota/zigbee/zigbee_enddevice_rgb.bin",
+      "sha256": "",
+      "notes": "Zigbee RGB end device (OnOff + Level + Color HS)"
+    },
+    "sensor": {
+      "version": "3.1.0",
+      "path": "/ota/zigbee/zigbee_enddevice_sensor.bin",
+      "sha256": "",
+      "notes": "Zigbee sensor end device (Temp/Humidity reporting)"
+    }
+  },
+  "mqtt": {
+    "relay": {
+      "version": "3.1.0",
+      "path": "/ota/mqtt/esp32_mqtt_relay.bin",
+      "sha256": "",
+      "notes": "ESP32 MQTT relay firmware (new contract)"
+    }
+  }
+}

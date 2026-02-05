@@ -1,0 +1,10 @@
+menu "SmartHome Zigbee End Device (Sensor)"
+
+config SMARTHOME_SENSOR_REPORT_INTERVAL_S
+    int "Report interval (seconds)"
+    default 10
+    range 2 3600
+    help
+        How often to update attribute values and send reports.
+
+endmenu

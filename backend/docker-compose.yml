@@ -1,0 +1,95 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: smarthome
+      MYSQL_USER: smarthome
+      MYSQL_PASSWORD: smarthome123
+      MYSQL_ROOT_PASSWORD: root123
+    ports:
+      # Expose on host for local tools (optional)
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      # Use container env (escape with $$) so healthcheck stays in sync with MYSQL_ROOT_PASSWORD
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    environment:
+      # These are consumed by backend/mosquitto/entrypoint.sh to generate
+      # /mosquitto/config/passwordfile at container start.
+      # Keep in sync with backend MQTT_USERNAME/MQTT_PASSWORD.
+      MOSQUITTO_USERNAME: "smarthome"
+      MOSQUITTO_PASSWORD: "smarthome123"
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    # IMPORTANT:
+    # - We mount repo config read-only at /config-ro
+    # - We use a writable volume at /mosquitto/config
+    # - entrypoint.sh copies config into the writable volume to avoid
+    #   "Read-only file system" / chown failures.
+    volumes:
+      - ./mosquitto:/config-ro:ro
+      - mosquitto_config:/mosquitto/config
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    entrypoint: ["/bin/sh", "/config-ro/entrypoint.sh"]
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    environment:
+      # Server
+      PORT: "3000"
+      CORS_ORIGIN: "*"
+
+      # JWT (CHANGE ME for real production)
+      JWT_SECRET: "dev_secret_change_me"
+      JWT_EXPIRES_IN: "7d"
+
+      # Prisma/MySQL (inside Docker network)
+      DATABASE_URL: "mysql://smarthome:smarthome123@mysql:3306/smarthome"
+
+      # MQTT (inside Docker network)
+      MQTT_URL: "mqtt://mosquitto:1883"
+      MQTT_USERNAME: "smarthome"
+      MQTT_PASSWORD: "smarthome123"
+      MQTT_CLIENT_ID: "smarthome-backend"
+      ZIGBEE_HUB_ID: "hub-<macSuffix>"
+
+      # Command tracking
+      COMMAND_TIMEOUT_MS: "10000"
+      COMMAND_SWEEP_INTERVAL_MS: "2000"
+
+      # Optional legacy data fixer (set to 1 if upgrading an existing legacy DB)
+      RUN_LEGACY_MIGRATION: "0"
+
+      NODE_ENV: "development"  # set to "production" only when JWT_SECRET + CORS_ORIGIN are configured
+    volumes:
+      - ./logs:/app/logs
+      - ./ota:/app/ota
+    ports:
+      - "3000:3000"
+
+volumes:
+  mysql_data:
+  mosquitto_config:
+  mosquitto_data:
+  mosquitto_log:

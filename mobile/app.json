@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "SmartHome",
+    "slug": "smarthome",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.yourcompany.smarthome",
+      "permissions": [
+        "android.permission.DETECT_SCREEN_CAPTURE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    // "newArchEnabled": false,
+    "extra": {
+      "eas": {
+        "projectId": "99fd2341-5fef-4d2c-abb0-762f9eaebe29"
+      }
+    }
+  }
+}

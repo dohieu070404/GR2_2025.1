@@ -1,0 +1,795 @@
+// Prisma schema for Smart Home (MySQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum DeviceType {
+  relay
+  dimmer
+  rgb
+  sensor
+}
+
+enum DeviceProtocol {
+  MQTT
+  ZIGBEE
+}
+
+enum ProductProtocol {
+  HUB
+  MQTT
+  ZIGBEE
+}
+
+enum DeviceLifecycleStatus {
+  FACTORY_NEW
+  CLAIMING
+  NEW_IN_BOX
+  ACTIVATING
+  BOUND
+  ACTIVE
+  UNBOUND
+  REUSED
+}
+
+enum InventoryStatus {
+  FACTORY_NEW
+  CLAIMED
+  BOUND
+  REVOKED
+}
+
+// Sprint 9: Hub inventory status (separate from DeviceInventory to avoid breaking device flows)
+enum HubInventoryStatus {
+  NEW
+  CLAIMED
+  BOUND
+  RETIRED
+}
+
+enum ResetRequestType {
+  RECONNECT
+  FACTORY_RESET
+}
+
+enum ResetRequestStatus {
+  PENDING
+  SENT
+  ACKED
+  FAILED
+  TIMEOUT
+}
+
+enum HomeMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+  GUEST
+}
+
+enum CommandStatus {
+  PENDING
+  ACKED
+  FAILED
+  TIMEOUT
+}
+
+// Sprint 5: SmartLock credential management
+enum LockCredentialType {
+  PIN
+  RFID
+}
+
+// Sprint 7: Hub OTA + firmware rollout management
+enum FirmwareTargetType {
+  HUB
+}
+
+enum FirmwareRolloutStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  DONE
+}
+
+enum FirmwareRolloutProgressState {
+  PENDING
+  DOWNLOADING
+  APPLYING
+  SUCCESS
+  FAILED
+}
+
+// Sprint 8: local automations (mini Xiaomi)
+enum AutomationTriggerType {
+  EVENT
+  STATE
+}
+
+enum AutomationDeploymentStatus {
+  SYNCING
+  APPLIED
+  FAILED
+}
+
+model ProductModel {
+  id                String          @id @db.VarChar(50)
+  name              String          @db.VarChar(120)
+  manufacturer      String          @db.VarChar(120)
+  protocol          ProductProtocol
+  fingerprintManuf  String?         @db.VarChar(120)
+  fingerprintModel  String?         @db.VarChar(120)
+
+  capabilities      Json?
+  uiSchema          Json?
+  defaultConfig     Json?
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  hubInventories    HubInventory[]
+  deviceInventories DeviceInventory[]
+  devices           Device[]
+
+  // Sprint 6: pairing/discovery model suggestions
+  zigbeeDiscoveredSuggested ZigbeeDiscoveredDevice[] @relation("ZigbeeSuggestedModel")
+  zigbeePairingExpected     ZigbeePairingSession[]  @relation("ZigbeeExpectedModel")
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  name         String   @db.VarChar(60)
+  email        String   @unique @db.VarChar(120)
+  passwordHash String   @db.VarChar(191)
+  /// Sprint 6: RBAC
+  isAdmin      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Sprint 9: profile
+  profile      UserProfile?
+
+  // Homes
+  homesOwned   Home[]       @relation("HomeOwner")
+  homeMembers  HomeMember[]
+
+  // Devices created by this user (audit)
+  devicesCreated Device[]   @relation("DeviceCreatedBy")
+
+  // Inventory claim audit
+  claimedDeviceInventory DeviceInventory[] @relation("DeviceInventoryClaimedBy")
+  claimedHubInventory    HubInventory[]    @relation("HubInventoryClaimedBy")
+
+  // Sprint 9: hub activation bindings (audit)
+  hubBindings   HubBinding[] @relation("HubBindingOwner")
+
+  // Sprint 9: invite codes
+  homeInvitesCreated  HomeInvite[] @relation("HomeInviteCreatedBy")
+  homeInvitesAccepted HomeInvite[] @relation("HomeInviteAcceptedBy")
+
+  resetRequests ResetRequest[]
+
+  // Zigbee discovery/pairing ownership
+  zigbeeDiscoveredDevices ZigbeeDiscoveredDevice[]
+  zigbeePairingSessions   ZigbeePairingSession[]
+}
+
+model Home {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(80)
+  ownerId   Int
+  owner     User     @relation("HomeOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  members   HomeMember[]
+  rooms     Room[]
+  devices   Device[]
+  hubs      Hub[]
+
+  // Sprint 9: bind inventory serial -> runtime hubId
+  hubBindings HubBinding[]
+
+  // Sprint 9: invite codes for sharing
+  invites  HomeInvite[]
+
+  zigbeePairingSessions ZigbeePairingSession[]
+  zigbeeDiscoveredDevices ZigbeeDiscoveredDevice[]
+
+  deviceInventoryClaims DeviceInventory[]
+  hubInventoryClaims    HubInventory[]
+
+  // Sprint 8: local automations
+  automationRules       AutomationRule[]
+  automationDeployments AutomationDeployment[]
+
+  @@index([ownerId])
+}
+
+model HomeMember {
+  id        Int            @id @default(autoincrement())
+  homeId    Int
+  userId    Int
+  role      HomeMemberRole @default(MEMBER)
+  createdAt DateTime       @default(now())
+
+  home      Home @relation(fields: [homeId], references: [id], onDelete: Cascade)
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([homeId, userId])
+  @@index([userId])
+}
+
+// Sprint 9: Minimal user profile
+model UserProfile {
+  userId      Int    @id
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName String? @db.VarChar(80)
+  avatarUrl   String? @db.VarChar(500)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([displayName])
+}
+
+// Sprint 9: Invite code for adding a member to a home
+model HomeInvite {
+  id              Int            @id @default(autoincrement())
+  homeId          Int
+  home            Home           @relation(fields: [homeId], references: [id], onDelete: Cascade)
+
+  code            String         @unique @db.VarChar(32)
+  role            HomeMemberRole @default(MEMBER)
+
+  createdByUserId Int
+  createdByUser   User           @relation("HomeInviteCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime       @default(now())
+  expiresAt       DateTime?
+
+  acceptedByUserId Int?
+  acceptedByUser   User?         @relation("HomeInviteAcceptedBy", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
+  acceptedAt       DateTime?
+
+  revokedAt       DateTime?
+
+  @@index([homeId])
+  @@index([createdByUserId])
+  @@index([expiresAt])
+}
+
+model Room {
+  id        Int      @id @default(autoincrement())
+  homeId    Int
+  name      String   @db.VarChar(80)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  home      Home    @relation(fields: [homeId], references: [id], onDelete: Cascade)
+  devices   Device[]
+
+  @@unique([homeId, name])
+  @@index([homeId])
+}
+
+model HubInventory {
+  id              Int            @id @default(autoincrement())
+  /// Printed serial on the box (what users/admins type/scan).
+  serial          String         @unique @db.VarChar(80)
+  setupCodeHash   String         @db.VarChar(191)
+  status          HubInventoryStatus @default(NEW)
+
+  modelId         String?        @db.VarChar(50)
+  productModel    ProductModel?  @relation(fields: [modelId], references: [id], onDelete: SetNull)
+
+  claimedAt       DateTime?
+  claimedByUserId Int?
+  claimedByUser   User?          @relation("HubInventoryClaimedBy", fields: [claimedByUserId], references: [id], onDelete: SetNull)
+  claimedHomeId   Int?
+  claimedHome     Home?          @relation(fields: [claimedHomeId], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime       @default(now())
+
+  // Sprint 9: once activated, a HubBinding links this inventory serial to a runtime hubId
+  binding         HubBinding?
+
+  @@index([status])
+}
+
+model DeviceInventory {
+  id              Int            @id @default(autoincrement())
+  serial          String         @unique @db.VarChar(80)
+  /// Stable UUID used in MQTT topics (matches Device.deviceId).
+  deviceUuid      String         @unique @db.VarChar(36)
+  typeDefault     DeviceType?
+  protocol        DeviceProtocol @default(MQTT)
+  model           String?        @db.VarChar(80)
+  setupCodeHash   String         @db.VarChar(191)
+  status          InventoryStatus @default(FACTORY_NEW)
+
+  modelId         String?        @db.VarChar(50)
+  productModel    ProductModel?  @relation(fields: [modelId], references: [id], onDelete: SetNull)
+
+  claimedAt       DateTime?
+  claimedByUserId Int?
+  claimedByUser   User?          @relation("DeviceInventoryClaimedBy", fields: [claimedByUserId], references: [id], onDelete: SetNull)
+  claimedHomeId   Int?
+  claimedHome     Home?          @relation(fields: [claimedHomeId], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime       @default(now())
+}
+
+// Sprint 9: Hub runtime state (upserted from MQTT) even when unbound
+model HubRuntime {
+  hubId       String   @id @db.VarChar(80)
+  mac         String?  @db.VarChar(32)
+  ip          String?  @db.VarChar(64)
+  fwVersion   String?  @db.VarChar(50)
+  rssi        Int?
+
+  firstSeenAt DateTime?
+  lastSeenAt  DateTime?
+  everOnline  Boolean  @default(false)
+  online      Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  binding     HubBinding?
+
+  @@index([mac])
+  @@index([online, lastSeenAt])
+}
+
+// Sprint 9: Binding between printed inventory serial and runtime hubId
+model HubBinding {
+  id              Int      @id @default(autoincrement())
+
+  inventorySerial String   @unique @db.VarChar(80)
+  inventory       HubInventory @relation(fields: [inventorySerial], references: [serial], onDelete: Cascade)
+
+  hubId           String   @unique @db.VarChar(80)
+  runtime         HubRuntime @relation(fields: [hubId], references: [hubId], onDelete: Cascade)
+
+  homeId          Int
+  home            Home     @relation(fields: [homeId], references: [id], onDelete: Cascade)
+
+  ownerId         Int
+  owner           User     @relation("HubBindingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  activatedAt     DateTime @default(now())
+
+  @@index([homeId])
+  @@index([hubId])
+  @@index([inventorySerial])
+}
+
+model Hub {
+  id              Int      @id @default(autoincrement())
+  hubId           String   @unique @db.VarChar(80)
+  homeId          Int
+  home            Home     @relation(fields: [homeId], references: [id], onDelete: Cascade)
+  name            String?  @db.VarChar(80)
+  firmwareVersion String?  @db.VarChar(50)
+  /// Sprint 7: coordinator fwVersion (ESP32-C6 Zigbee coordinator behind this hub host)
+  coordinatorFirmwareVersion String? @db.VarChar(50)
+  coordinatorBuildTime       String? @db.VarChar(80)
+  /// Sprint 6: hub runtime metadata (best-effort, from hub status payload)
+  mac             String?  @db.VarChar(32)
+  ip              String?  @db.VarChar(64)
+  rssi            Int?
+  lastSeen        DateTime?
+  online          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  devices         Device[]
+  credentials     HubCredential[]
+
+  firmwareRolloutTargets  FirmwareRolloutTarget[]
+  firmwareRolloutProgress FirmwareRolloutProgress[]
+
+  // Sprint 8: automation sync status per hub
+  automationDeployments   AutomationDeployment[]
+
+  @@index([homeId])
+}
+
+// Sprint 7: firmware release catalog for OTA
+model FirmwareRelease {
+  id         Int              @id @default(autoincrement())
+  targetType FirmwareTargetType
+  version    String           @db.VarChar(60)
+  url        String           @db.VarChar(500)
+  sha256     String           @db.VarChar(64)
+  size       Int?
+  notes      String?          @db.Text
+  createdAt  DateTime         @default(now())
+
+  rollouts   FirmwareRollout[]
+
+  @@index([targetType, createdAt])
+  @@index([version])
+}
+
+model FirmwareRollout {
+  id        Int                  @id @default(autoincrement())
+  releaseId Int
+  release   FirmwareRelease      @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  status    FirmwareRolloutStatus @default(DRAFT)
+
+  startedAt DateTime?
+  pausedAt  DateTime?
+
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  targets   FirmwareRolloutTarget[]
+  progress  FirmwareRolloutProgress[]
+
+  @@index([releaseId])
+  @@index([status, updatedAt])
+}
+
+model FirmwareRolloutTarget {
+  rolloutId Int
+  rollout   FirmwareRollout @relation(fields: [rolloutId], references: [id], onDelete: Cascade)
+
+  hubId     String  @db.VarChar(80)
+  hub       Hub     @relation(fields: [hubId], references: [hubId], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([rolloutId, hubId])
+  @@index([hubId])
+}
+
+model FirmwareRolloutProgress {
+  rolloutId Int
+  rollout   FirmwareRollout @relation(fields: [rolloutId], references: [id], onDelete: Cascade)
+
+  hubId     String  @db.VarChar(80)
+  hub       Hub     @relation(fields: [hubId], references: [hubId], onDelete: Cascade)
+
+  state     FirmwareRolloutProgressState @default(PENDING)
+  /// Current attempt count (0..)
+  attempt   Int      @default(0)
+  cmdId     String?  @db.VarChar(36)
+  sentAt    DateTime?
+  ackedAt   DateTime?
+  lastMsg   String?  @db.Text
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@id([rolloutId, hubId])
+  @@index([hubId])
+  @@index([state, updatedAt])
+}
+
+// Sprint 8: local automations (mini Xiaomi)
+model AutomationRule {
+  id        Int      @id @default(autoincrement())
+  homeId    Int
+  home      Home     @relation(fields: [homeId], references: [id], onDelete: Cascade)
+
+  name      String   @db.VarChar(120)
+  enabled   Boolean  @default(true)
+
+  /// Home-level automation version when this rule was last changed.
+  version   Int      @default(0)
+
+  triggerType AutomationTriggerType
+  trigger    Json
+  actions    Json
+  executionPolicy Json?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([homeId, enabled])
+  @@index([homeId, updatedAt])
+}
+
+model AutomationDeployment {
+  id        Int      @id @default(autoincrement())
+  hubId     String   @db.VarChar(80)
+  hub       Hub      @relation(fields: [hubId], references: [hubId], onDelete: Cascade)
+
+  homeId    Int
+  home      Home     @relation(fields: [homeId], references: [id], onDelete: Cascade)
+
+  desiredVersion Int @default(0)
+  appliedVersion Int @default(0)
+  status    AutomationDeploymentStatus @default(SYNCING)
+  lastMsg   String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([hubId, homeId])
+  @@index([homeId, updatedAt])
+  @@index([hubId, updatedAt])
+}
+
+model HubCredential {
+  id         Int      @id @default(autoincrement())
+  hubId      String   @db.VarChar(80)
+  hub        Hub      @relation(fields: [hubId], references: [hubId], onDelete: Cascade)
+  username   String   @db.VarChar(120)
+  secretHash String   @db.VarChar(191)
+  revokedAt  DateTime?
+  rotatedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([hubId, revokedAt])
+}
+
+model Device {
+  id              Int            @id @default(autoincrement())
+  name            String         @db.VarChar(80)
+  type            DeviceType
+  protocol        DeviceProtocol @default(MQTT)
+  firmwareVersion String?        @db.VarChar(50)
+  firmwareType    String?        @db.VarChar(50)
+
+  modelId         String?        @db.VarChar(50)
+  productModel    ProductModel?  @relation(fields: [modelId], references: [id], onDelete: SetNull)
+
+  /// Stable UUID used for MQTT topics:
+  ///   home/<homeId>/device/<deviceId>/...
+  deviceId         String        @unique @db.VarChar(36)
+
+  /// Provisioning serial (maps to DeviceInventory.serial)
+  serial           String?       @unique @db.VarChar(80)
+
+  lifecycleStatus  DeviceLifecycleStatus @default(BOUND)
+  boundAt          DateTime?
+  unboundAt        DateTime?
+  lastProvisionedAt DateTime?
+
+  homeId           Int
+  home             Home    @relation(fields: [homeId], references: [id], onDelete: Cascade)
+
+  roomId           Int?
+  room             Room?   @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  /// Legacy user-defined MQTT topic base (deprecated).
+  /// Only kept for migration/compatibility; backend MUST NOT accept this from clients.
+  legacyTopicBase  String? @db.VarChar(200)
+
+  /// Legacy room name (deprecated). Populated during migration for reference.
+  legacyRoomName   String? @db.VarChar(80)
+
+  // Optional fields for gateway-integrated devices (ex: Zigbee)
+  hubId       String?
+  hub         Hub?     @relation(fields: [hubId], references: [hubId], onDelete: SetNull)
+  zigbeeIeee  String?
+
+  /// Sprint 11: "claimed" badge after Identify confirm.
+  /// Set to true when backend receives `home/zb/<ieee>/event` with type="device.claimed".
+  claimed     Boolean  @default(false)
+
+  createdById Int?
+  createdBy   User?   @relation("DeviceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stateCurrent DeviceStateCurrent?
+  stateHistory DeviceStateHistory[]
+  events       DeviceEvent[]
+  commands     Command[]
+  resetRequests ResetRequest[]
+  credentials  DeviceCredential[]
+
+  // Sprint 5: SmartLock credentials + sync version
+  lockCredentials LockCredential[]
+  lockSyncState  LockSyncState?
+
+  @@index([homeId])
+  @@index([roomId])
+  @@index([createdById])
+  @@index([legacyTopicBase])
+  @@index([hubId])
+  @@index([zigbeeIeee])
+}
+
+// Sprint 5: SmartLock credential store (hashed) for audit + versioning sync.
+// The device keeps its own credential store in NVS; DB is the source of truth for
+// user intent and audit, not for plaintext secrets.
+model LockCredential {
+  id         Int               @id @default(autoincrement())
+  deviceId   Int
+  device     Device            @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  type       LockCredentialType
+  slot       Int
+  label      String?           @db.VarChar(80)
+  /// bcrypt hash of PIN digits or RFID UID (normalized)
+  secretHash String            @db.VarChar(191)
+  revokedAt  DateTime?
+  /// version of LockSyncState when this credential was last changed
+  syncVersion Int              @default(0)
+
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@unique([deviceId, type, slot])
+  @@index([deviceId, type, revokedAt])
+  @@index([deviceId, revokedAt])
+}
+
+// Sprint 5: per-device incremental version counter for credential sync.
+model LockSyncState {
+  deviceId  Int     @id
+  device    Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  version   Int     @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+model DeviceCredential {
+  id         Int      @id @default(autoincrement())
+  deviceId   Int
+  device     Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  username   String   @db.VarChar(120)
+  secretHash String   @db.VarChar(191)
+  revokedAt  DateTime?
+  rotatedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([deviceId, revokedAt])
+}
+
+model ResetRequest {
+  id               Int               @id @default(autoincrement())
+  deviceId         Int
+  device           Device            @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  cmdId            String            @db.VarChar(36)
+  type             ResetRequestType
+  status           ResetRequestStatus @default(PENDING)
+  requestedByUserId Int
+  requestedByUser   User             @relation(fields: [requestedByUserId], references: [id], onDelete: Cascade)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  ackedAt          DateTime?
+  error            String?           @db.Text
+
+  @@unique([deviceId, cmdId])
+  @@index([deviceId, status, createdAt])
+  @@index([requestedByUserId, createdAt])
+}
+
+model DeviceStateCurrent {
+  deviceId  Int     @id
+  device    Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  state     Json?
+  updatedAt DateTime @default(now()) @updatedAt
+  // Sprint 9: device online tracking
+  firstSeenAt DateTime?
+  lastSeen  DateTime?
+  everOnline Boolean  @default(false)
+  online    Boolean  @default(false)
+}
+
+model DeviceStateHistory {
+  id        Int      @id @default(autoincrement())
+  deviceId  Int
+  state     Json?
+  online    Boolean  @default(false)
+  lastSeen  DateTime?
+  createdAt DateTime @default(now())
+
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId])
+  @@index([createdAt])
+}
+
+
+model DeviceEvent {
+  id        Int      @id @default(autoincrement())
+  deviceId  Int
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  /// Event type (e.g. "motion.detected", "lock.unlock")
+  type      String   @db.VarChar(120)
+  data      Json?
+
+  /// Optional source timestamp from the device/hub (converted from payload.ts)
+  sourceAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([deviceId, createdAt])
+  @@index([type])
+  @@index([sourceAt])
+}
+
+model Command {
+  id       Int     @id @default(autoincrement())
+  deviceId Int
+  device   Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  /// Unique per device
+  cmdId   String @db.VarChar(36)
+
+  payload Json
+  status  CommandStatus @default(PENDING)
+
+  sentAt  DateTime @default(now())
+  ackedAt DateTime?
+  error   String? @db.Text
+
+  @@unique([deviceId, cmdId])
+  @@index([deviceId, status, sentAt])
+}
+
+enum ZigbeeDiscoveredStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
+// Sprint 2: Xiaomi-style pairing flows (while keeping legacy flow for existing mobile UI)
+enum ZigbeePairingMode {
+  LEGACY
+  SERIAL_FIRST
+  TYPE_FIRST
+}
+
+model ZigbeeDiscoveredDevice {
+  id            Int      @id @default(autoincrement())
+  ownerId       Int
+  homeId        Int?
+  hubId         String
+  pairingToken  String
+  ieee          String
+  shortAddr     Int?
+  model         String?
+  manufacturer  String?
+  swBuildId     String?  @db.VarChar(120)
+  suggestedType DeviceType?
+  suggestedModelId String? @db.VarChar(50)
+  status        ZigbeeDiscoveredStatus @default(PENDING)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  owner         User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  home          Home?    @relation(fields: [homeId], references: [id], onDelete: SetNull)
+  suggestedModel ProductModel? @relation("ZigbeeSuggestedModel", fields: [suggestedModelId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, status])
+  @@index([homeId, status])
+  @@index([pairingToken])
+  @@index([suggestedModelId])
+  @@unique([hubId, ieee])
+}
+
+model ZigbeePairingSession {
+  token     String   @id @db.VarChar(36)
+  ownerId   Int
+  hubId     String   @db.VarChar(80)
+  homeId    Int?
+  home      Home?    @relation(fields: [homeId], references: [id], onDelete: SetNull)
+  mode      ZigbeePairingMode @default(LEGACY)
+  claimedSerial   String? @db.VarChar(80)
+  expectedModelId String? @db.VarChar(50)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  expectedModel ProductModel? @relation("ZigbeeExpectedModel", fields: [expectedModelId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId])
+  @@index([hubId])
+  @@index([expiresAt])
+  @@index([mode])
+  @@index([claimedSerial])
+  @@index([expectedModelId])
+}

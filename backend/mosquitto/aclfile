@@ -1,0 +1,18 @@
+# Sample Mosquitto ACL.
+#
+# This is intentionally permissive for local development.
+# For production, create separate MQTT users per home/device/hub and restrict
+# their topic patterns accordingly.
+
+user smarthome
+
+# DEV: allow this user to read/write everything under home/...
+topic readwrite home/#
+
+# Diagnostics used by backend healthcheck/roundtrip tests
+topic readwrite diagnostics/#
+
+# PRODUCTION IDEA (example):
+# - backend user: allow home/#
+# - per-home user: allow home/<homeId>/#
+# - per-device user: allow only home/<homeId>/device/<deviceId>/+

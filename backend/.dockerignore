@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log
+.DS_Store
+.env
+
+# Git / IDE
+.git
+.gitignore
+.vscode
+.idea
+
+# Docs
+README.md
+
+# OS junk
+Thumbs.db

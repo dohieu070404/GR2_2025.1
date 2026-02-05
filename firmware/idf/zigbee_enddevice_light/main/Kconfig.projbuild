@@ -1,0 +1,26 @@
+menu "SmartHome Zigbee End Device (Light)"
+
+config SMARTHOME_LIGHT_GPIO
+    int "On/Off GPIO"
+    default 2
+    help
+        GPIO output driven by the Zigbee On/Off attribute.
+
+config SMARTHOME_LIGHT_ACTIVE_HIGH
+    bool "GPIO active-high"
+    default y
+    help
+        If enabled, GPIO=1 means ON. If disabled, GPIO=0 means ON.
+
+config SMARTHOME_LIGHT_PWM_GPIO
+    int "PWM GPIO (optional, 0 to disable)"
+    default 0
+    help
+        Optional PWM output driven by the Zigbee Level Control current level.
+
+config SMARTHOME_LIGHT_PWM_FREQ_HZ
+    int "PWM frequency (Hz)"
+    default 5000
+    range 1 50000
+
+endmenu
